@@ -1,0 +1,19 @@
+{
+  "name": "随手记提醒",
+  "short_name": "随手记",
+  "description": "快速记录别人交代的重要事项，并设定提醒。",
+  "start_url": "./",
+  "display": "standalone",
+  "display_override": ["standalone"],
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#09090b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="随手记" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="description" content="随手记 + 智能提醒工具" />
+    <title>随手记提醒</title>
+    <link rel="manifest" href="./manifest.webmanifest?v=20260429a" />
+    <link rel="icon" href="./icon.svg?v=20260429a" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.svg?v=20260429a" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #09090b;
+        color: #f4f7fb;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css?v=20260429a" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <p class="eyebrow">随手记 + 智能提醒</p>
+        <h1 class="app-title">随手记</h1>
+        <p id="appStatus" class="status-text">正在准备手机离线使用…</p>
+      </header>
+
+      <main class="layout">
+        <section class="page is-active" data-page="capture">
+          <form id="captureForm" class="capture-card">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">打开即输入</p>
+                <h2>立刻记下</h2>
+              </div>
+            </div>
+
+            <label class="sr-only" for="noteInput">快速记录</label>
+            <textarea
+              id="noteInput"
+              class="note-input"
+              placeholder="比如：明天记得把这个留给我来做"
+              rows="3"
+              autofocus
+              enterkeyhint="done"
+            ></textarea>
+
+            <div class="capture-actions">
+              <button id="saveBtn" class="primary-button" type="submit">保存并设提醒</button>
+            </div>
+
+            <div class="reminder-panel">
+              <div class="section-title-row">
+                <span class="section-title">提醒时间</span>
+                <span id="selectedReminderLabel" class="selection-pill">未选择</span>
+              </div>
+              <div class="preset-grid">
+                <button class="preset-button" type="button" data-preset="1h">1 小时后</button>
+                <button class="preset-button" type="button" data-preset="tonight">今晚</button>
+                <button class="preset-button" type="button" data-preset="tomorrow-morning">明天早上</button>
+                <button class="preset-button" type="button" data-preset="custom">自定义</button>
+              </div>
+              <div id="customDateWrap" class="hidden">
+                <label class="inline-label" for="customDate">自定义时间</label>
+                <input id="customDate" class="datetime-input" type="datetime-local" />
+              </div>
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta-card">
+                <label class="inline-label" for="repeatSelect">重复提醒</label>
+                <select id="repeatSelect" class="select-input">
+                  <option value="none">不重复</option>
+                  <option value="5">每 5 分钟</option>
+                  <option value="15">每 15 分钟</option>
+                  <option value="30">每 30 分钟</option>
+                  <option value="60">每 1 小时</option>
+                </select>
+              </div>
+
+              <div class="meta-card">
+                <label class="inline-label" for="manualCategory">分类</label>
+                <select id="manualCategory" class="select-input">
+                  <option value="">AI 自动分类</option>
+                  <option value="家庭">家庭</option>
+                  <option value="工作">工作</option>
+                  <option value="购物">购物</option>
+                  <option value="出行">出行</option>
+                  <option value="健康">健康</option>
+                  <option value="财务">财务</option>
+                  <option value="其他">其他</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="permissions-row">
+              <button id="permissionBtn" class="ghost-button" type="button">开启通知和声音</button>
+              <span id="permissionStatus" class="muted-text">尚未授权</span>
+            </div>
+          </form>
+        </section>
+
+        <section class="page" data-page="tasks">
+          <section class="list-section">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">未完成事项</p>
+                <h2>待办</h2>
+              </div>
+              <span id="activeCount" class="count-pill">0</span>
+            </div>
+            <div id="taskList" class="task-list"></div>
+          </section>
+        </section>
+
+        <section class="page" data-page="archive">
+          <section class="list-section">
+            <div class="section-head">
+              <div>
+                <p class="section-kicker">已完成和归档</p>
+                <h2>归档</h2>
+              </div>
+              <span id="archiveCount" class="count-pill">0</span>
+            </div>
+            <div id="archiveList" class="task-list"></div>
+          </section>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="主导航">
+        <button class="nav-button is-active" type="button" data-page-target="capture">
+          <span>记录</span>
+        </button>
+        <button class="nav-button" type="button" data-page-target="tasks">
+          <span>待办</span>
+          <span id="navActiveCount" class="nav-badge hidden">0</span>
+        </button>
+        <button class="nav-button" type="button" data-page-target="archive">
+          <span>归档</span>
+        </button>
+      </nav>
+
+      <div id="toast" class="toast hidden" aria-live="polite"></div>
+    </div>
+
+    <template id="taskTemplate">
+      <article class="task-card">
+        <div class="task-topline">
+          <span class="task-category"></span>
+          <span class="task-reminder"></span>
+        </div>
+        <p class="task-text"></p>
+        <div class="tag-row"></div>
+        <div class="task-actions"></div>
+      </article>
+    </template>
+
+    <script src="./app.js?v=20260429a"></script>
+  </body>
+</html>
