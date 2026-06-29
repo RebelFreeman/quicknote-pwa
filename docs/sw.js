@@ -1,4 +1,4 @@
-const CACHE_NAME = "quicknote-shell-v20260429a";
+const CACHE_NAME = "quicknote-shell-v20260629a";
 const APP_SHELL = [
   "./",
   "./index.html",

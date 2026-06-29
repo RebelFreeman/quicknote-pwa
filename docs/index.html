@@ -22,7 +22,7 @@
         color: #f4f7fb;
       }
     </style>
-    <link rel="stylesheet" href="./styles.css?v=20260429a" />
+    <link rel="stylesheet" href="./styles.css?v=20260629a" />
   </head>
   <body>
     <div class="app-shell">
@@ -132,6 +132,58 @@
             <div id="archiveList" class="task-list"></div>
           </section>
         </section>
+
+        <section class="page" data-page="sync">
+          <section class="list-section">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">跨设备实时</p>
+                <h2>同步</h2>
+              </div>
+              <span id="syncStatus" class="sync-status-badge idle">未连接</span>
+            </div>
+
+            <div id="syncSetupNote" class="sync-setup-note hidden">
+              <p class="muted-text">云同步需要 Firebase 支持。</p>
+              <p class="muted-text">请在 <code>index.html</code> 中将 <code>window.FIREBASE_CONFIG</code> 替换为你自己的 Firebase 项目配置，然后刷新页面。</p>
+              <p class="muted-text">获取配置：Firebase 控制台 → 项目设置 → 你的应用 → Firebase SDK 配置</p>
+            </div>
+
+            <div id="syncConnectSection" class="hidden">
+              <div class="sync-key-section">
+                <p class="section-title">当前同步码</p>
+                <div class="sync-key-row">
+                  <span id="syncKeyDisplay" class="sync-key-display">—</span>
+                  <button id="syncCopyBtn" class="action-button" type="button">复制</button>
+                </div>
+              </div>
+
+              <div class="sync-input-section">
+                <label class="inline-label" for="syncKeyInput">输入另一台设备上的同步码</label>
+                <input
+                  id="syncKeyInput"
+                  class="sync-key-input"
+                  type="text"
+                  placeholder="xxxx-xxxx-xxxx-xxxx"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                />
+              </div>
+
+              <div class="sync-actions">
+                <button id="syncConnectBtn" class="primary-button" type="button">连接同步</button>
+                <button id="syncGenerateBtn" class="ghost-button" type="button">生成新同步码</button>
+                <button id="syncDisconnectBtn" class="action-button danger hidden" type="button">断开同步</button>
+              </div>
+
+              <p class="muted-text sync-hint">
+                在另一台设备上打开此 App，进入同步页面，输入同一个同步码后点击「连接同步」，即可实时双向同步所有待办事项。
+              </p>
+            </div>
+          </section>
+        </section>
       </main>
 
       <nav class="bottom-nav" aria-label="主导航">
@@ -144,6 +196,10 @@
         </button>
         <button class="nav-button" type="button" data-page-target="archive">
           <span>归档</span>
+        </button>
+        <button class="nav-button" type="button" data-page-target="sync">
+          <span>同步</span>
+          <span id="navSyncBadge" class="nav-badge sync-active hidden">●</span>
         </button>
       </nav>
 
@@ -162,6 +218,28 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260429a"></script>
+    <!--
+      跨设备同步配置
+      ============
+      1. 前往 https://console.firebase.google.com 创建项目
+      2. 启用 Firestore Database（测试模式即可）
+      3. 将下方 null 替换为你的 Firebase 项目配置对象
+      4. 在 Firestore 安全规则中添加：
+         match /rooms/{roomId}/tasks/{taskId} { allow read, write: if true; }
+
+      Firebase 配置示例：
+      {
+        apiKey: "AIza...",
+        authDomain: "your-project.firebaseapp.com",
+        projectId: "your-project-id",
+        storageBucket: "your-project.appspot.com",
+        messagingSenderId: "123456789",
+        appId: "1:123456789:web:abc123"
+      }
+    -->
+    <script>
+      window.FIREBASE_CONFIG = null;
+    </script>
+    <script src="./app.js?v=20260629a"></script>
   </body>
 </html>

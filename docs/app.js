@@ -3,7 +3,8 @@ const LEGACY_STORAGE_KEY = "quick-reminder-tasks-v1";
 const DEVICE_STORAGE_KEY = "quicknote-device-tasks-v2";
 const DB_NAME = "quicknote-mobile-db";
 const DB_STORE = "kv";
-const SW_VERSION = "20260429a";
+const SW_VERSION = "20260629a";
+const SYNC_KEY_STORAGE = "quicknote-sync-key-v1";
 
 const state = {
   tasks: [],
@@ -16,6 +17,13 @@ const state = {
   isSaving: false,
   offlineReady: false,
   deviceReady: false,
+  sync: {
+    configured: false,
+    active: false,
+    syncKey: null,
+    status: "idle",
+    listener: null,
+  },
 };
 
 const els = {
@@ -35,10 +43,20 @@ const els = {
   activeCount: document.querySelector("#activeCount"),
   archiveCount: document.querySelector("#archiveCount"),
   navActiveCount: document.querySelector("#navActiveCount"),
+  navSyncBadge: document.querySelector("#navSyncBadge"),
   toast: document.querySelector("#toast"),
   taskTemplate: document.querySelector("#taskTemplate"),
   pages: Array.from(document.querySelectorAll(".page")),
   navButtons: Array.from(document.querySelectorAll(".nav-button")),
+  syncStatus: document.querySelector("#syncStatus"),
+  syncKeyDisplay: document.querySelector("#syncKeyDisplay"),
+  syncKeyInput: document.querySelector("#syncKeyInput"),
+  syncGenerateBtn: document.querySelector("#syncGenerateBtn"),
+  syncConnectBtn: document.querySelector("#syncConnectBtn"),
+  syncDisconnectBtn: document.querySelector("#syncDisconnectBtn"),
+  syncCopyBtn: document.querySelector("#syncCopyBtn"),
+  syncSetupNote: document.querySelector("#syncSetupNote"),
+  syncConnectSection: document.querySelector("#syncConnectSection"),
 };
 
 init();
@@ -54,6 +72,7 @@ async function init() {
   await loadTasks();
   await registerServiceWorker();
   await requestPersistentStorage();
+  initSync();
 }
 
 function bindEvents() {
@@ -109,6 +128,55 @@ function bindEvents() {
 
   window.addEventListener("online", updateStatusText);
   window.addEventListener("offline", updateStatusText);
+
+  if (els.syncGenerateBtn) {
+    els.syncGenerateBtn.addEventListener("click", () => {
+      const newKey = generateSyncKey();
+      if (els.syncKeyInput) els.syncKeyInput.value = newKey;
+      connectSync(newKey);
+      showToast("已生成同步码，正在连接…");
+    });
+  }
+
+  if (els.syncConnectBtn) {
+    els.syncConnectBtn.addEventListener("click", () => {
+      const key = els.syncKeyInput ? els.syncKeyInput.value.trim().toLowerCase() : "";
+      if (!key) {
+        showToast("请先输入或生成同步码");
+        return;
+      }
+      connectSync(key);
+      showToast("正在连接云同步…");
+    });
+  }
+
+  if (els.syncDisconnectBtn) {
+    els.syncDisconnectBtn.addEventListener("click", () => {
+      disconnectSync();
+      showToast("已断开同步，数据保留在本机");
+    });
+  }
+
+  if (els.syncCopyBtn) {
+    els.syncCopyBtn.addEventListener("click", async () => {
+      if (!state.sync.syncKey) return;
+      try {
+        await navigator.clipboard.writeText(state.sync.syncKey);
+        showToast("同步码已复制");
+      } catch {
+        showToast(`同步码：${state.sync.syncKey}`);
+      }
+    });
+  }
+
+  if (els.syncKeyInput) {
+    els.syncKeyInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        els.syncConnectBtn?.click();
+      }
+    });
+  }
 }
 
 async function loadTasks() {
@@ -212,7 +280,7 @@ async function createTask() {
     const aiMeta = analyzeTask(text);
     const category = manualCategory || aiMeta.category;
 
-    state.tasks.unshift({
+    const newTask = {
       id: createTaskId(),
       text,
       reminderAt,
@@ -223,11 +291,14 @@ async function createTask() {
       status: "active",
       archived: false,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       lastTriggeredAt: null,
       notified: false,
-    });
+    };
+    state.tasks.unshift(newTask);
 
     await persistTasks();
+    void pushTaskToSync(newTask);
     render();
     resetComposer();
     switchPage("tasks");
@@ -376,6 +447,7 @@ function restoreTask(taskId) {
 }
 
 function deleteTask(taskId) {
+  void pushDeleteToSync(taskId);
   state.tasks = state.tasks.filter((task) => task.id !== taskId);
   void persistAndRender();
 }
@@ -392,6 +464,8 @@ function updateTask(taskId, updater) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
   updater(task);
+  task.updatedAt = new Date().toISOString();
+  void pushTaskToSync(task);
   void persistAndRender();
 }
 
@@ -727,4 +801,213 @@ function mergeTasks(...sources) {
   return Array.from(merged.values()).sort((a, b) =>
     String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
   );
+}
+
+// === 跨设备同步（Firebase Firestore）===
+
+function generateSyncKey() {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+  const part = () =>
+    Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return `${part()}-${part()}-${part()}-${part()}`;
+}
+
+async function loadFirebaseSDK() {
+  const loadScript = (src) =>
+    new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) {
+        resolve();
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    });
+
+  await loadScript("https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js");
+  await loadScript("https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js");
+}
+
+async function initSync() {
+  if (!window.FIREBASE_CONFIG) {
+    state.sync.status = "unconfigured";
+    updateSyncUI();
+    return;
+  }
+
+  try {
+    await loadFirebaseSDK();
+    if (!firebase.apps.length) {
+      firebase.initializeApp(window.FIREBASE_CONFIG);
+    }
+    firebase
+      .firestore()
+      .enablePersistence()
+      .catch((err) => {
+        if (err.code !== "failed-precondition" && err.code !== "unimplemented") {
+          console.warn("Firestore persistence unavailable:", err.code);
+        }
+      });
+    state.sync.configured = true;
+
+    const savedKey = localStorage.getItem(SYNC_KEY_STORAGE);
+    if (savedKey) {
+      connectSync(savedKey);
+    } else {
+      state.sync.status = "idle";
+      updateSyncUI();
+    }
+  } catch (err) {
+    console.error("Firebase init failed:", err);
+    state.sync.status = "error";
+    updateSyncUI();
+  }
+}
+
+function connectSync(syncKey) {
+  if (!state.sync.configured) return;
+
+  if (state.sync.listener) {
+    state.sync.listener();
+    state.sync.listener = null;
+  }
+
+  state.sync.syncKey = syncKey;
+  state.sync.active = true;
+  state.sync.status = "connecting";
+  localStorage.setItem(SYNC_KEY_STORAGE, syncKey);
+  updateSyncUI();
+
+  const col = firebase.firestore().collection("rooms").doc(syncKey).collection("tasks");
+
+  state.sync.listener = col.onSnapshot(
+    (snapshot) => {
+      const remoteTasks = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (!data._deleted) remoteTasks.push(data);
+      });
+      mergeRemoteTasks(remoteTasks);
+      state.sync.status = "synced";
+      updateSyncUI();
+    },
+    (err) => {
+      console.error("Sync listener error:", err);
+      state.sync.status = "error";
+      updateSyncUI();
+    }
+  );
+
+  void pushAllTasksToSync();
+}
+
+function disconnectSync() {
+  if (state.sync.listener) {
+    state.sync.listener();
+    state.sync.listener = null;
+  }
+  state.sync.active = false;
+  state.sync.syncKey = null;
+  state.sync.status = "idle";
+  localStorage.removeItem(SYNC_KEY_STORAGE);
+  updateSyncUI();
+}
+
+function mergeRemoteTasks(remoteTasks) {
+  const byId = new Map(state.tasks.map((t) => [t.id, t]));
+
+  remoteTasks.forEach((remote) => {
+    const local = byId.get(remote.id);
+    if (!local) {
+      byId.set(remote.id, remote);
+    } else {
+      const remoteMs = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
+      const localMs = new Date(local.updatedAt || local.createdAt || 0).getTime();
+      if (remoteMs > localMs) byId.set(remote.id, remote);
+    }
+  });
+
+  state.tasks = Array.from(byId.values()).sort((a, b) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+  );
+
+  void writeTasksToDevice(state.tasks);
+  writeShadowTasks(state.tasks);
+  render();
+}
+
+async function pushTaskToSync(task) {
+  if (!state.sync.active || !state.sync.syncKey) return;
+  try {
+    await firebase
+      .firestore()
+      .collection("rooms")
+      .doc(state.sync.syncKey)
+      .collection("tasks")
+      .doc(task.id)
+      .set({ ...task, updatedAt: task.updatedAt || new Date().toISOString() });
+  } catch (err) {
+    console.error("Sync push failed:", err);
+  }
+}
+
+async function pushDeleteToSync(taskId) {
+  if (!state.sync.active || !state.sync.syncKey) return;
+  try {
+    await firebase
+      .firestore()
+      .collection("rooms")
+      .doc(state.sync.syncKey)
+      .collection("tasks")
+      .doc(taskId)
+      .set({ _deleted: true, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error("Sync delete failed:", err);
+  }
+}
+
+async function pushAllTasksToSync() {
+  for (const task of state.tasks) {
+    await pushTaskToSync(task);
+  }
+}
+
+function updateSyncUI() {
+  if (!els.syncStatus) return;
+
+  if (!state.sync.configured) {
+    els.syncStatus.textContent = "需配置 Firebase";
+    els.syncStatus.className = "sync-status-badge unconfigured";
+    els.syncSetupNote?.classList.remove("hidden");
+    els.syncConnectSection?.classList.add("hidden");
+    if (els.navSyncBadge) els.navSyncBadge.classList.add("hidden");
+    return;
+  }
+
+  els.syncSetupNote?.classList.add("hidden");
+  els.syncConnectSection?.classList.remove("hidden");
+
+  const labels = {
+    idle: "未连接",
+    connecting: "连接中…",
+    synced: "已同步",
+    error: "同步出错",
+  };
+
+  els.syncStatus.textContent = labels[state.sync.status] || "—";
+  els.syncStatus.className = `sync-status-badge ${state.sync.status}`;
+
+  if (els.syncKeyDisplay) {
+    els.syncKeyDisplay.textContent = state.sync.syncKey || "—";
+  }
+
+  if (els.syncDisconnectBtn) {
+    els.syncDisconnectBtn.classList.toggle("hidden", !state.sync.active);
+  }
+
+  if (els.navSyncBadge) {
+    els.navSyncBadge.classList.toggle("hidden", state.sync.status !== "synced");
+  }
 }
